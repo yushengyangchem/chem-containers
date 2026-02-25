@@ -1,0 +1,91 @@
+# ---------- Stage 1: build OpenMPI ----------
+Bootstrap: docker-archive
+From: ./rockylinux10.1.20251126.tar
+Stage: build
+
+%labels
+    Maintainer yangys
+    Stage build OpenMPI 4.1.8
+
+%files
+    ./openmpi-4.1.8.tar.bz2 /opt
+
+%post
+    sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+      -e 's|^#baseurl=http://dl.rockylinux.org/$contentdir|baseurl=https://mirrors.ustc.edu.cn/rocky|g' \
+      -i.bak \
+      /etc/yum.repos.d/rocky*.repo
+    dnf makecache
+
+    dnf -y install dnf-plugins-core
+    dnf config-manager --set-enabled crb
+    dnf -y install epel-release
+    dnf -y update
+
+    dnf -y groupinstall "Development Tools"
+    dnf -y install gcc-gfortran
+
+    cd /opt
+    tar -xf /opt/openmpi-4.1.8.tar.bz2
+    mkdir -p /opt/openmpi418
+    cd /opt/openmpi-4.1.8 && ./configure --prefix=/opt/openmpi418 && make -j"$(nproc)" all && make install
+    strip --strip-unneeded /opt/openmpi418/bin/* || true
+    strip --strip-unneeded /opt/openmpi418/lib/*.so* || true
+    rm -rf /opt/openmpi418/include
+    rm -rf /opt/openmpi418/share/man
+    rm -rf /opt/openmpi418/lib/pkgconfig
+    find /opt/openmpi418 -name "*.mod" -delete
+    find /opt/openmpi418 -name "*.la" -delete
+
+# ---------- Stage 2: final runtime image ----------
+Bootstrap: docker-archive
+From: ./rockylinux10.1.20251126.tar
+Stage: runtime
+
+%labels
+    Maintainer yangys
+    App ORCA 6.1.1 in RockyLinux 10.1 (OpenMPI 4.1.8, OfakeG 1.3.3)
+
+%files
+    ./orca_6_1_1_linux_x86-64_shared_openmpi418_avx2.tar.xz /opt
+    ./OfakeG_1.3.3.zip /opt
+
+%files from build
+    /opt/openmpi418 /opt/openmpi418
+
+%post
+    sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+      -e 's|^#baseurl=http://dl.rockylinux.org/$contentdir|baseurl=https://mirrors.ustc.edu.cn/rocky|g' \
+      -i.bak \
+      /etc/yum.repos.d/rocky*.repo
+    dnf makecache
+    dnf install -y xz unzip
+    dnf install -y openssh-clients
+
+    unzip /opt/OfakeG_1.3.3.zip -d /opt && rm -f /opt/OfakeG_1.3.3.zip
+    chmod +x /opt/OfakeG_1.3.3/OfakeG
+    cd /opt/OfakeG_1.3.3 && find . -mindepth 1 -maxdepth 1 ! -name 'OfakeG' -exec rm -rf {} +
+
+    tar -xf /opt/orca_6_1_1_linux_x86-64_shared_openmpi418_avx2.tar.xz -C /opt
+    rm -rf /opt/orca_6_1_1_linux_x86-64_shared_openmpi418_avx2.tar.xz
+    rm -rf /opt/orca_6_1_1_linux_x86-64_shared_openmpi418_avx2/EULA_ORCA_2025.pdf
+    rm -rf /opt/orca_6_1_1_linux_x86-64_shared_openmpi418_avx2/Third_Party_Licenses_Academic_6.1.pdf
+    rm -rf /opt/orca_6_1_1_linux_x86-64_shared_openmpi418_avx2/datasets
+
+    echo "/opt/openmpi418/lib" > /etc/ld.so.conf.d/openmpi418.conf
+    ldconfig
+
+    dnf remove -y unzip xz
+    dnf -y autoremove
+    dnf clean all
+    rm -rf /var/cache/dnf/* /root/.cache
+
+%environment
+    export PATH=$PATH:/opt/openmpi418/bin
+    export PATH=$PATH:/opt/orca_6_1_1_linux_x86-64_shared_openmpi418_avx2
+    export PATH=$PATH:/opt/OfakeG_1.3.3
+    export OMPI_ALLOW_RUN_AS_ROOT=1
+    export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+
+%runscript
+    exec /opt/orca_6_1_1_linux_x86-64_shared_openmpi418_avx2/orca "$@"

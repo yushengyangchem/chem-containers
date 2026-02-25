@@ -1,0 +1,39 @@
+Bootstrap: docker-archive
+From: ./rockylinux10.1.20251126.tar
+
+%labels
+    Maintainer yangys
+    App Gaussian 16 C02 in RockyLinux 10.1
+
+%files
+    ./g16C02_no_tests.tar.bz2 /opt
+
+%post -c /bin/bash
+    sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+      -e 's|^#baseurl=http://dl.rockylinux.org/$contentdir|baseurl=https://mirrors.ustc.edu.cn/rocky|g' \
+      -i.bak \
+      /etc/yum.repos.d/rocky*.repo
+    dnf makecache
+
+    dnf install -y bzip2
+    tar -xf /opt/g16C02_no_tests.tar.bz2 -C /opt
+    chmod -R 750 /opt/g16
+    chown -R root:users /opt/g16
+    rm -rf /opt/g16C02_no_tests.tar.bz2
+
+    dnf remove -y bzip2
+    dnf -y autoremove
+    dnf clean all
+    rm -rf /var/cache/dnf/* /root/.cache
+
+    cp /opt/g16/bsd/g16.profile /opt/g16/bsd/g16.profile.sh
+    sed -i '/ulimit/d' /opt/g16/bsd/g16.profile.sh
+
+%environment
+    export g16root=/opt
+    source /opt/g16/bsd/g16.profile.sh
+
+%runscript
+    #!/bin/bash
+    source /opt/g16/bsd/g16.profile
+    exec g16 "$@"

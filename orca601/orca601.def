@@ -1,0 +1,84 @@
+# ---------- Stage 1: build OpenMPI ----------
+Bootstrap: docker-archive
+From: ./debian12.11.tar
+Stage: build
+
+%labels
+    Maintainer yangys
+    Stage build OpenMPI 4.1.6
+
+%files
+    ./openmpi-4.1.6.tar.bz2 /opt
+
+%post
+    set -e
+    sed -i 's|deb.debian.org|mirrors.cernet.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+    sed -i 's|security.debian.org/debian-security|mirrors.cernet.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources
+
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+	gfortran
+
+    cd /opt
+    tar -xf /opt/openmpi-4.1.6.tar.bz2
+
+    cd /opt/openmpi-4.1.6
+    ./configure --prefix=/opt/openmpi416 --disable-static
+    make -j"$(nproc)" all
+    make install
+
+    strip --strip-unneeded /opt/openmpi416/bin/* || true
+    strip --strip-unneeded /opt/openmpi416/lib/*.so* || true
+
+# ---------- Stage 2: final runtime image ----------
+Bootstrap: docker-archive
+From: ./debian12.11.tar
+Stage: runtime
+
+%labels
+    Maintainer yangys
+    App ORCA 6.0.1 in debian 12.11 (OpenMPI 4.1.6 runtime, OfakeG 1.3.3)
+
+%files
+    ./orca_6_0_1_linux_x86-64_shared_openmpi416_avx2.tar.xz /opt
+    ./OfakeG_1.3.3.zip /opt
+
+%files from build
+    /opt/openmpi416 /opt/openmpi416
+
+%post
+    set -e
+    sed -i 's|deb.debian.org|mirrors.cernet.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+    sed -i 's|security.debian.org/debian-security|mirrors.cernet.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources
+
+    apt-get update && apt-get install -y --no-install-recommends \
+        unzip \
+	xz-utils \
+	openssh-client # for openmpi 4.1.6
+
+    unzip /opt/OfakeG_1.3.3.zip -d /opt && rm -f /opt/OfakeG_1.3.3.zip
+    chmod +x /opt/OfakeG_1.3.3/OfakeG
+
+    tar -xf /opt/orca_6_0_1_linux_x86-64_shared_openmpi416_avx2.tar.xz -C /opt
+    rm -f /opt/orca_6_0_1_linux_x86-64_shared_openmpi416_avx2.tar.xz
+
+    echo "/opt/openmpi416/lib" > /etc/ld.so.conf.d/openmpi416.conf
+    ldconfig
+
+    apt-get purge -y \
+    unzip \
+    xz-utils
+
+    apt-get autoremove -y
+    apt-get clean
+    rm -rf /var/lib/apt/lists/* /root/.cache
+
+%environment
+    export PATH=$PATH:/opt/openmpi416/bin
+    export PATH=$PATH:/opt/orca_6_0_1_linux_x86-64_shared_openmpi416_avx2
+    export PATH=$PATH:/opt/OfakeG_1.3.3
+    export OMPI_ALLOW_RUN_AS_ROOT=1
+    export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+
+%runscript
+    exec /opt/orca_6_0_1_linux_x86-64_shared_openmpi416_avx2/orca "$@"

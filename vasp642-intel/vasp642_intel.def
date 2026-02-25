@@ -1,0 +1,147 @@
+# ---------- Stage 1: build VASP ----------
+Bootstrap: docker-archive
+From: ./debian12.11.tar
+Stage: build
+
+%labels
+    Maintainer yangys
+    Stage build VASP 6.4.2, Intel compiler
+
+%files
+    ./vasp.6.4.2.tgz /opt
+
+%post -c /bin/bash
+    set -e
+    sed -i 's|deb.debian.org|mirrors.cernet.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+    sed -i 's|security.debian.org/debian-security|mirrors.cernet.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources
+
+    apt-get update && apt-get install -y --no-install-recommends \
+        wget \
+	gpg \
+	ca-certificates \
+	build-essential \
+	pkg-config \
+	procps \
+	rsync
+
+    update-ca-certificates
+    install -d -m 0755 /usr/share/keyrings
+    wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+    | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+    echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+    | tee /etc/apt/sources.list.d/oneAPI.list
+    apt-get update && apt-get install -y --no-install-recommends \
+        intel-basekit \
+	intel-hpckit
+    . /opt/intel/oneapi/setvars.sh > /dev/null 2>&1
+
+    tar -xf /opt/vasp.6.4.2.tgz -C /opt
+    cp /opt/vasp.6.4.2/arch/makefile.include.intel_ompi_mkl_omp /opt/vasp.6.4.2/makefile.include
+    sed -i -E \
+    -e 's|^FC[[:space:]]*=.*|FC          = mpiifx -qopenmp|' \
+    -e 's|^FCL[[:space:]]*=.*|FCL         = mpiifx|' \
+    -e 's|^([[:space:]]*FCL[[:space:]]*\+=).*|\1 -qmkl=cluster|' \
+    -e 's|^CC_LIB[[:space:]]*=.*|CC_LIB      = icx|' \
+    -e 's|^CXX_PARS[[:space:]]*=.*|CXX_PARS    = icpx|' \
+    -e 's|^MKLROOT[[:space:]]*\?=.*|MKLROOT ?= /opt/intel/oneapi/mkl/latest|' \
+    -e 's|^SCALAPACK_ROOT.*|# &|' \
+    -e 's|^([[:space:]]*LLIBS[[:space:]]*\+=.*-lscalapack.*)|# \1|' \
+    /opt/vasp.6.4.2/makefile.include
+    cd /opt/vasp.6.4.2 && make all # -j$(nproc) failed for Fortran
+
+# ---------- Stage 2: final runtime image ----------
+Bootstrap: docker-archive
+From: ./debian12.11.tar
+Stage: runtime
+
+%labels
+    Maintainer yangys
+    App VASP 6.4.2, vaspkit 1.5.1 debian 12.11, Intel compiler
+
+%files
+    ./vaspkit.1.5.1.linux.x64.tar.gz /opt
+    ./potpaw_LDA.64.tgz /opt
+    ./potpaw_PBE.64.tgz /opt
+
+%files from build
+    /opt/vasp.6.4.2/bin /opt/vasp.6.4.2/bin
+
+%post -c /bin/bash
+    set -e
+    sed -i 's|deb.debian.org|mirrors.cernet.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+    sed -i 's|security.debian.org/debian-security|mirrors.cernet.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources
+
+    apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    gpg \
+    ca-certificates \
+    procps \
+    python3 \
+    python3-numpy \
+    python3-scipy \
+    python3-matplotlib \
+    libfabric-bin
+
+    update-ca-certificates
+    install -d -m 0755 /usr/share/keyrings
+    wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+    | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+    echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+    | tee /etc/apt/sources.list.d/oneAPI.list
+    apt-get update && apt-get install -y --no-install-recommends \
+    intel-oneapi-runtime-libs \
+    intel-oneapi-mpi
+    . /opt/intel/oneapi/setvars.sh > /dev/null 2>&1
+
+    tar -xf /opt/vaspkit.1.5.1.linux.x64.tar.gz -C /opt
+    rm -rf /opt/vaspkit.1.5.1.linux.x64.tar.gz
+    cp /opt/vaspkit.1.5.1/how_to_set_environment_variables /etc/vaspkit
+
+    mkdir -p /opt/POTCAR/LDA
+    tar -xf /opt/potpaw_LDA.64.tgz -C /opt/POTCAR/LDA
+    rm -rf /opt/potpaw_LDA.64.tgz
+    mkdir -p /opt/POTCAR/PBE
+    tar -xf /opt/potpaw_PBE.64.tgz -C /opt/POTCAR/PBE
+    rm -rf /opt/potpaw_PBE.64.tgz
+    sed -i 's|~/vaspkit/utilities|/opt/vaspkit.1.5.1/utilities|g' /etc/vaspkit
+    sed -i 's|~/POTCAR/LDA|/opt/POTCAR/LDA|g' /etc/vaspkit
+    sed -i 's|~/POTCAR/PBE|/opt/POTCAR/PBE|g' /etc/vaspkit
+    sed -i 's/GGA_PATH/#GGA_PATH/g' /etc/vaspkit
+    sed -i 's|~/anaconda3/bin/python3|/usr/bin/python3|g' /etc/vaspkit
+
+    apt-get purge -y \
+    wget \
+    gpg \
+    ca-certificates
+
+    apt-get autoremove -y
+    apt-get clean
+    rm -rf /var/lib/apt/lists/* /root/.cache
+
+%environment
+    export PATH=$PATH:/opt/vasp.6.4.2/bin
+    export PATH=$PATH:/opt/vaspkit.1.5.1/bin
+    export PATH=$PATH:/opt/intel/oneapi/mpi/latest/bin
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/intel/oneapi/mpi/latest/lib
+
+    export OMP_NUM_THREADS=1
+    export MKL_NUM_THREADS=1
+    export OMP_DYNAMIC=0
+    export MKL_DYNAMIC=0
+    export KMP_BLOCKTIME=0
+    export I_MPI_PIN=1
+    export I_MPI_PIN_DOMAIN=auto
+    export I_MPI_PIN_ORDER=compact
+
+    export I_MPI_FABRICS=shm:ofi
+    export I_MPI_OFI_LIBRARY_INTERNAL=0
+    export FI_PROVIDER='tcp;ofi_rxm'
+    export FI_TCP_IFACE=lo
+
+    export I_MPI_DEBUG=0
+
+    unset FI_PROVIDER_PATH
+
+%runscript
+    #!/bin/bash
+    exec vasp_std "$@"

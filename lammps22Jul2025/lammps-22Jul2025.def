@@ -1,0 +1,102 @@
+# ---------- Stage 1: build ----------
+Bootstrap: docker-archive
+From: ./debian12.11.tar
+Stage: build
+
+%labels
+    Maintainer yangys
+    Build lammps 22Jul2025 in debian 12.11
+
+%files
+    ./lammps-src-22Jul2025.tar.gz /opt
+
+%post
+    sed -i 's|deb.debian.org|mirrors.cernet.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+    sed -i 's|security.debian.org/debian-security|mirrors.cernet.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources
+
+    apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      libopenmpi-dev \
+      cmake \
+      pkgconf \
+      libfftw3-dev \
+      libpng-dev \
+      libjpeg-dev \
+      libkim-api-dev \
+      python3-dev \
+      python3-venv \
+      python3-pip
+
+    python3 -m venv /opt/venv
+    export PATH=/opt/venv/bin:$PATH
+
+    tar -xf /opt/lammps-src-22Jul2025.tar.gz -C /opt
+
+    mkdir -p /opt/lammps
+    mkdir -p /opt/lammps-22Jul2025/build
+    cd /opt/lammps-22Jul2025/build
+    cmake ../cmake \
+      -DCMAKE_INSTALL_PREFIX=/opt/lammps \
+      -DPKG_REAXFF=ON \
+      -DPKG_MANYBODY=ON \
+      -DPKG_KSPACE=ON \
+      -DPKG_MOLECULE=ON \
+      -DBUILD_MPI=ON \
+      -DBUILD_SHARED_LIBS=ON \
+      -DPKG_PYTHON=ON \
+      -DPython_EXECUTABLE=/opt/venv/bin/python3 \
+      -DPKG_KIM=ON
+
+    cmake --build . -j$(nproc)
+    make install
+    make install-python
+
+# ---------- Stage 2: final runtime image ----------
+Bootstrap: docker-archive
+From: ./debian12.11.tar
+Stage: runtime
+
+%labels
+    Maintainer yangys
+    App lammps 22Jul2025 in debian 12.11
+
+%files from build
+    /opt/lammps /opt/lammps
+    /opt/venv /opt/venv
+
+%post
+    sed -i 's|deb.debian.org|mirrors.cernet.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+    sed -i 's|security.debian.org/debian-security|mirrors.cernet.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources
+
+    apt-get update && apt-get install -y --no-install-recommends \
+      libopenmpi3 \
+      openmpi-bin \
+      libfftw3-double3 \
+      libpng16-16 \
+      libjpeg62-turbo \
+      openkim-models \
+      python3 \
+      libpython3.11 \
+      python3-venv \
+      python3-pip
+
+    export PATH=/opt/venv/bin:$PATH
+    /opt/venv/bin/pip install mpi4py -i https://mirrors.cernet.edu.cn/pypi/web/simple
+
+    echo "/opt/lammps/lib" > /etc/ld.so.conf.d/lammps.conf
+    ldconfig
+
+    apt-get autoremove -y
+    apt-get clean
+    rm -rf /var/lib/apt/lists/* /root/.cache
+
+%environment
+    export LAMMPS_POTENTIALS=/opt/lammps/share/lammps/potentials
+    export PATH=/opt/venv/bin:$PATH
+    export PATH=$PATH:/opt/lammps/bin
+    export OMP_NUM_THREADS=1 # mpi priority
+    export OMPI_ALLOW_RUN_AS_ROOT=1
+    export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+
+%runscript
+    exec lmp "$@"
