@@ -33,10 +33,10 @@ For most directories, run the build script (need `sudo` or `root`):
 ./build.sh
 ```
 
-For `qe75/`, build the Docker image:
+To build the Docker image:
 
 ```bash
-docker build -t qe75 .
+docker build -t [name:tag] .
 ```
 
 ## License
