@@ -27,10 +27,16 @@ Navigate to the desired application directory:
 cd [directory_name]
 ```
 
-Run the build script (need `sudo` or `root`):
+For most directories, run the build script (need `sudo` or `root`):
 
 ```bash
 ./build.sh
+```
+
+For `qe75/`, build the Docker image:
+
+```bash
+docker build -t qe75 .
 ```
 
 ## License
