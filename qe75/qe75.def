@@ -1,0 +1,140 @@
+# ---------- Stage 1: build ----------
+Bootstrap: docker-archive
+From: ./rockylinux10.1.20251126.tar
+Stage: build
+
+%labels
+    Maintainer yangys
+    Build Quantum ESPRESSO 7.5 in RockyLinux 10.1
+
+%files
+    ./q-e-qe-7.5.tar.gz /opt
+    ./libxc-7.0.0.tar.gz /opt
+
+%post
+    sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+      -e 's|^#baseurl=http://dl.rockylinux.org/$contentdir|baseurl=https://mirrors.ustc.edu.cn/rocky|g' \
+      -i.bak \
+      /etc/yum.repos.d/rocky*.repo
+    dnf makecache
+
+    dnf -y install dnf-plugins-core
+    dnf config-manager --set-enabled crb
+    dnf -y install epel-release
+    dnf -y update
+
+    dnf -y groupinstall "Development Tools"
+    dnf -y install gcc-gfortran
+    dnf -y install openmpi openmpi-devel
+    dnf -y install fftw fftw-devel
+    dnf -y install openblas openblas-devel
+    dnf -y install scalapack-openmpi scalapack-openmpi-devel
+    dnf -y install hdf5-openmpi hdf5-openmpi-devel
+    dnf -y install which
+    #dnf -y install cmake ninja-build patch bzip2
+
+    #PATCH_URL="https://gitlab.com/libxc/libxc/-/commit/450202adb8a3d698841dca853f2999b1befd932e.patch"
+    #tar -xf /opt/libxc-7.0.0.tar.gz -C /opt
+    #mkdir -p /opt/libxc700
+    #cd /opt/libxc-7.0.0
+    #curl -L "${PATCH_URL}" -o /opt/libxc-7.0.0/libxc-cmake-policy.patch
+    #patch -p1 < /opt/libxc-7.0.0/libxc-cmake-policy.patch
+    #mkdir -p /opt/libxc-7.0.0/build && cd /opt/libxc-7.0.0/build
+    #cmake -S .. -B . -G Ninja \
+    #  -DCMAKE_BUILD_TYPE=Release \
+    #  -DCMAKE_INSTALL_PREFIX=/opt/libxc700 \
+    #  -DENABLE_FORTRAN=ON \
+    #  -DBUILD_SHARED_LIBS=ON \
+    #  -DENABLE_XHOST=OFF \
+    #  -DDISABLE_VXC=0 \
+    #  -DDISABLE_FXC=0 \
+    #  -DDISABLE_KXC=0 \
+    #  -DDISABLE_LXC=0
+
+    #ninja -v
+    ## ctest --output-on-failure
+    #ninja install
+
+    #echo "/opt/libxc700/lib64" > /etc/ld.so.conf.d/libxc700.conf
+    #ldconfig
+
+    tar -xf /opt/q-e-qe-7.5.tar.gz -C /opt
+    mkdir -p /opt/qe75
+    cd /opt/q-e-qe-7.5/external && ./initialize_external_repos.sh
+
+    export PATH=/usr/lib64/openmpi/bin:$PATH
+    echo "/usr/lib64/openmpi/lib" > /etc/ld.so.conf.d/openmpi.conf
+    ldconfig
+
+    # no elpa
+    cd /opt/q-e-qe-7.5 && ./configure \
+      LIBDIRS="/usr/lib64 /usr/lib64/openmpi/lib" \
+      LIBS="-fopenmp" \
+      CC=mpicc \
+      FC=mpif90 \
+      F77=mpif77 \
+      --prefix=/opt/qe75 \
+      BLAS_LIBS="-lopenblas" \
+      LAPACK_LIBS="-lopenblas" \
+      SCALAPACK_LIBS="-lscalapack" \
+      --enable-parallel=yes \
+      --enable-openmp=yes \
+      --with-hdf5=yes \
+      --with-hdf5-include=/usr/lib64/gfortran/modules/openmpi \
+      --with-libxc=no
+    #  --with-libxc=yes \
+    #  --with-libxc-prefix=/opt/libxc700
+    make all -j$(nproc) && make install
+
+# ---------- Stage 2: final runtime image ----------
+Bootstrap: docker-archive
+From: ./rockylinux10.1.20251126.tar
+Stage: runtime
+
+%labels
+    Maintainer yangys
+    App Quantum ESPRESSO 7.5 in RockyLinux 10.1
+
+%files from build
+    /opt/qe75 /opt/qe75
+    #/opt/libxc700 /opt/libxc700
+
+%post
+    sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+      -e 's|^#baseurl=http://dl.rockylinux.org/$contentdir|baseurl=https://mirrors.ustc.edu.cn/rocky|g' \
+      -i.bak \
+      /etc/yum.repos.d/rocky*.repo
+    dnf makecache
+
+    dnf -y install dnf-plugins-core
+    dnf config-manager --set-enabled crb
+    dnf -y install epel-release
+    dnf -y update
+
+    dnf -y install openmpi
+    dnf -y install fftw-libs-double
+    dnf -y install openblas-serial
+    dnf -y install scalapack-openmpi
+    dnf -y install hdf5-openmpi
+
+    #rm -rf /opt/libxc700/include
+    #rm -rf /opt/libxc700/lib64/cmake
+    #rm -rf /opt/libxc700/lib64/pkgconfig
+    #echo "/opt/libxc700/lib64" > /etc/ld.so.conf.d/libxc700.conf
+    #echo "/usr/lib64/openmpi/lib" > /etc/ld.so.conf.d/openmpi.conf
+    #ldconfig
+
+    dnf -y autoremove
+    dnf clean all
+    rm -rf /var/cache/dnf/* /root/.cache
+
+%environment
+    #export PATH=/opt/qe75/bin:/usr/lib64/openmpi/bin:/opt/libxc700/bin:$PATH
+    export PATH=/opt/qe75/bin:/usr/lib64/openmpi/bin:$PATH
+    export OPENBLAS_NUM_THREADS=1
+    export OMP_NUM_THREADS=1 # mpi priority
+    export OMPI_ALLOW_RUN_AS_ROOT=1
+    export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+
+%runscript
+    exec "$@"

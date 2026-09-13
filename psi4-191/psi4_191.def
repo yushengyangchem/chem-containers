@@ -1,0 +1,32 @@
+Bootstrap: docker-archive
+From: ./debian13.0.tar
+
+%labels
+    Maintainer yangys
+    App Psi4 1.9.1 in debian 13.0
+
+%files
+    ./Psi4conda-1.9.1-py313-Linux-x86_64.sh /opt
+
+%post -c /bin/bash
+    bash /opt/Psi4conda-1.9.1-py313-Linux-x86_64.sh -b -p /opt/psi4conda
+    rm -rf /opt/Psi4conda-1.9.1-py313-Linux-x86_64.sh
+    rm -rf /root/.cache
+    rm -rf /opt/psi4conda/pkgs/cache
+
+%environment
+    export PATH=/opt/psi4conda/bin:/opt/psi4conda/condabin:$PATH
+    export CONDA_EXE=/opt/psi4conda/bin/conda
+    export CONDA_PYTHON_EXE=/opt/psi4conda/bin/python
+    export CONDA_SHLVL=0
+    export _CE_M=""
+    export _CE_CONDA=""
+
+    export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+    export MKL_NUM_THREADS=${MKL_NUM_THREADS:-1}
+    export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}
+    export PYTHONNOUSERSITE=1
+
+%runscript
+    #!/bin/bash
+    exec psi4 "$@"

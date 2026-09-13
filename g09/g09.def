@@ -1,0 +1,39 @@
+Bootstrap: docker-archive
+From: ./rockylinux10.1.20251126.tar
+
+%labels
+    Maintainer yangys
+    App Gaussian 09E in RockyLinux 10.1
+
+%files
+    ./g09E_no_tests.tar.bz2 /opt
+
+%post -c /bin/bash
+    sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+      -e 's|^#baseurl=http://dl.rockylinux.org/$contentdir|baseurl=https://mirrors.ustc.edu.cn/rocky|g' \
+      -i.bak \
+      /etc/yum.repos.d/rocky*.repo
+    dnf makecache
+
+    dnf install -y bzip2
+    tar -xf /opt/g09E_no_tests.tar.bz2 -C /opt
+    chmod -R 750 /opt/g09
+    chown -R root:users /opt/g09
+    rm -rf /opt/g09E_no_tests.tar.bz2
+
+    dnf remove -y bzip2
+    dnf -y autoremove
+    dnf clean all
+    rm -rf /var/cache/dnf/* /root/.cache
+
+    cp /opt/g09/bsd/g09.profile /opt/g09/bsd/g09.profile.sh
+    sed -i '/ulimit/d' /opt/g09/bsd/g09.profile.sh
+
+%environment
+    export g09root=/opt
+    source /opt/g09/bsd/g09.profile.sh
+
+%runscript
+    #!/bin/bash
+    source /opt/g09/bsd/g09.profile
+    exec g09 "$@"

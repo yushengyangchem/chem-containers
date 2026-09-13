@@ -1,0 +1,120 @@
+# ---------- Stage 1: build VASP ----------
+Bootstrap: docker-archive
+From: ./debian12.11.tar
+Stage: build
+
+%labels
+    Maintainer yangys
+    Stage build VASP 6.4.2
+
+%files
+    ./vasp.6.4.2.tgz /opt
+
+%post
+    sed -i 's|deb.debian.org|mirrors.cernet.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+    sed -i 's|security.debian.org/debian-security|mirrors.cernet.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources
+
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        gfortran \
+        libopenmpi-dev \
+        libopenblas-dev \
+        libscalapack-openmpi-dev \
+        libfftw3-dev \
+        libfftw3-mpi-dev \
+        rsync
+
+    tar -xf /opt/vasp.6.4.2.tgz -C /opt
+    cp /opt/vasp.6.4.2/arch/makefile.include.gnu_ompi_aocl_omp /opt/vasp.6.4.2/makefile.include
+
+    sed -i -E \
+    -e 's|^AMDBLIS_ROOT.*|#AMDBLIS_ROOT ?= /path/to/your/amdblis/installation|' \
+    -e 's|^[[:space:]]*BLAS[[:space:]]*=.*AMDBLIS_ROOT.*|#BLAS        = -L${AMDBLIS_ROOT}/lib -lblis-mt\nBLAS        = -L/usr/lib/x86_64-linux-gnu -lopenblas|' \
+    -e 's|^AMDLIBFLAME_ROOT.*|#AMDLIBFLAME_ROOT ?= /path/to/your/amdlibflame/installation|' \
+    -e 's|^[[:space:]]*LAPACK[[:space:]]*=.*AMDLIBFLAME_ROOT.*|#LAPACK      = -L${AMDLIBFLAME_ROOT}/lib -lflame\nLAPACK      = -L/usr/lib/x86_64-linux-gnu -lopenblas|' \
+    -e 's|^AMDSCALAPACK_ROOT.*|#AMDSCALAPACK_ROOT ?= /path/to/your/amdscalapack/installation|' \
+    -e 's|^[[:space:]]*SCALAPACK[[:space:]]*=.*AMDSCALAPACK_ROOT.*|#SCALAPACK   = -L${AMDSCALAPACK_ROOT}/lib -lscalapack\nSCALAPACK   = -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lscalapack-openmpi|' \
+    /opt/vasp.6.4.2/makefile.include
+    sed -i 's/\r$//' /opt/vasp.6.4.2/makefile.include
+    sed -i -E \
+    's|^[[:space:]]*AMDFFTW_ROOT[[:space:]]*\?.*|#AMDFFTW_ROOT  ?= /path/to/your/amdfftw/installation|' \
+    /opt/vasp.6.4.2/makefile.include
+    sed -i -E \
+    's|^[[:space:]]*LLIBS[[:space:]]*\+=.*AMDFFTW_ROOT.*/lib.*|#LLIBS      += -L$(AMDFFTW_ROOT)/lib -lfftw3 -lfftw3_omp|' \
+    /opt/vasp.6.4.2/makefile.include
+    sed -i -E \
+    's|^[[:space:]]*INCS[[:space:]]*\+=.*AMDFFTW_ROOT.*/include.*|#INCS       += -I$(AMDFFTW_ROOT)/include|' \
+    /opt/vasp.6.4.2/makefile.include
+    sed -i -E \
+    '/^#INCS[[:space:]]+\+=[[:space:]]+-I\$\((AMDFFTW_ROOT)\)\/include/a INCS       += -I/usr/include' \
+    /opt/vasp.6.4.2/makefile.include
+    sed -i -E \
+    '/^#INCS[[:space:]]+\+=[[:space:]]+-I\$\((AMDFFTW_ROOT)\)\/include/a LLIBS      += -L/usr/lib/x86_64-linux-gnu -lfftw3 -lfftw3_omp -lfftw3_mpi' \
+    /opt/vasp.6.4.2/makefile.include
+    cd /opt/vasp.6.4.2 && make all # -j"$(nproc)" failed for Fortran
+
+# ---------- Stage 2: final runtime image ----------
+Bootstrap: docker-archive
+From: ./debian12.11.tar
+Stage: runtime
+
+%labels
+    Maintainer yangys
+    App VASP 6.4.2, vaspkit 1.5.1 debian 12.11
+
+%files
+    ./vaspkit.1.5.1.linux.x64.tar.gz /opt
+    ./potpaw_LDA.64.tgz /opt
+    ./potpaw_PBE.64.tgz /opt
+    ./vtstscripts.tgz /opt
+
+%files from build
+    /opt/vasp.6.4.2/bin /opt/vasp.6.4.2/bin
+
+%post
+    sed -i 's|deb.debian.org|mirrors.cernet.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+    sed -i 's|security.debian.org/debian-security|mirrors.cernet.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources
+
+    apt-get update && apt-get install -y --no-install-recommends \
+    libopenmpi3 \
+    openmpi-bin \
+    libopenblas0 \
+    libscalapack-openmpi2.2 \
+    libfftw3-double3 \
+    libfftw3-mpi3 \
+    python3 python3-numpy python3-scipy python3-matplotlib
+
+    tar -xf /opt/vaspkit.1.5.1.linux.x64.tar.gz -C /opt
+    rm -rf /opt/vaspkit.1.5.1.linux.x64.tar.gz
+    cp /opt/vaspkit.1.5.1/how_to_set_environment_variables /etc/vaspkit
+
+    mkdir -p /opt/POTCAR/LDA
+    tar -xf /opt/potpaw_LDA.64.tgz -C /opt/POTCAR/LDA
+    rm -rf /opt/potpaw_LDA.64.tgz
+    mkdir -p /opt/POTCAR/PBE
+    tar -xf /opt/potpaw_PBE.64.tgz -C /opt/POTCAR/PBE
+    rm -rf /opt/potpaw_PBE.64.tgz
+    sed -i 's|~/vaspkit/utilities|/opt/vaspkit.1.5.1/utilities|g' /etc/vaspkit
+    sed -i 's|~/POTCAR/LDA|/opt/POTCAR/LDA|g' /etc/vaspkit
+    sed -i 's|~/POTCAR/PBE|/opt/POTCAR/PBE|g' /etc/vaspkit
+    sed -i 's/GGA_PATH/#GGA_PATH/g' /etc/vaspkit
+    sed -i 's|~/anaconda3/bin/python3|/usr/bin/python3|g' /etc/vaspkit
+
+    tar -xf /opt/vtstscripts.tgz -C /opt
+    rm -rf /opt/vtstscripts.tgz
+
+    apt-get autoremove -y
+    apt-get clean
+    rm -rf /var/lib/apt/lists/* /root/.cache
+
+%environment
+    export PATH=$PATH:/opt/vasp.6.4.2/bin
+    export PATH=$PATH:/opt/vaspkit.1.5.1/bin
+    export PATH=$PATH:/opt/vtstscripts-1036
+    export OMP_NUM_THREADS=1 # mpi priority
+    export OMPI_ALLOW_RUN_AS_ROOT=1
+    export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+    export export HWLOC_COMPONENTS=-gl # resolved the "Authorization required, but no authorization protocol specified" error
+
+%runscript
+    exec vasp_std "$@"

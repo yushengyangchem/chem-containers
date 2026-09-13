@@ -1,0 +1,67 @@
+# ---------- Stage 1: build ----------
+Bootstrap: docker-archive
+From: ./debian13.3.tar
+Stage: build
+
+%labels
+    Maintainer yangys
+    Build Wannier90-develop-20260119 in debian 13.3
+
+%files
+    ./wannier90-develop-20260119.zip /opt
+
+%post -c /bin/bash
+    sed -i 's|deb.debian.org|mirrors.ustc.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+    sed -i 's|security.debian.org/debian-security|mirrors.ustc.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources
+
+    apt-get update && apt-get install -y --no-install-recommends \
+        libopenmpi-dev \
+        build-essential \
+        gfortran \
+        libopenblas-pthread-dev \
+        unzip
+
+    unzip /opt/wannier90-develop-20260119.zip -d /opt
+    mkdir -p /opt/wannier90
+    cp /opt/wannier90-develop/config/make.inc.gfort /opt/wannier90-develop/make.inc
+    sed -i \
+      -e 's/^F90 = .*/F90 = mpif90\nCOMMS  = mpi\nMPIF90 = mpif90/' \
+      -e 's/^LIBS = .*/LIBS = -lopenblas/' \
+      -e 's/^FCOPTS = -O3$/FCOPTS = -O3 -fallow-argument-mismatch/' \
+      /opt/wannier90-develop/make.inc
+    cd /opt/wannier90-develop && make -j"$(nproc)" && make install PREFIX=/opt/wannier90
+
+# ---------- Stage 2: final runtime image ----------
+Bootstrap: docker-archive
+From: ./debian13.3.tar
+Stage: runtime
+
+%labels
+    Maintainer yangys
+    Runtime Wannier90-develop-20260119 in debian 13.3
+
+%files from build
+    /opt/wannier90 /opt/wannier90
+
+%post -c /bin/bash
+    sed -i 's|deb.debian.org|mirrors.ustc.edu.cn|g' /etc/apt/sources.list.d/debian.sources
+    sed -i 's|security.debian.org/debian-security|mirrors.ustc.edu.cn/debian-security|g' /etc/apt/sources.list.d/debian.sources
+
+    apt-get update && apt-get install -y --no-install-recommends \
+        libopenblas0-pthread \
+        openmpi-bin
+
+    apt-get autoremove -y
+    apt-get clean
+    rm -rf /var/lib/apt/lists/* /root/.cache
+
+%environment
+    export PATH=/opt/wannier90/bin:$PATH
+    export OMPI_ALLOW_RUN_AS_ROOT=1
+    export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+    export OPENBLAS_NUM_THREADS=1
+    export OMP_NUM_THREADS=1
+
+%runscript
+    #!/bin/bash
+    exec wannier90.x "$@"

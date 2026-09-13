@@ -1,0 +1,121 @@
+# ---------- Stage 1: build ----------
+Bootstrap: docker-archive
+From: ./rockylinux10.1.20251126.tar
+Stage: build
+
+%labels
+    Maintainer yangys
+    Build lammps 22Jul2025 in RockyLinux 10.1
+
+%files
+    ./lammps-src-22Jul2025.tar.gz /opt
+
+%post
+    sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+      -e 's|^#baseurl=http://dl.rockylinux.org/$contentdir|baseurl=https://mirrors.ustc.edu.cn/rocky|g' \
+      -i.bak \
+      /etc/yum.repos.d/rocky*.repo
+    dnf makecache
+
+    dnf -y install dnf-plugins-core
+    dnf config-manager --set-enabled crb
+    dnf -y install epel-release
+    dnf -y update
+
+    dnf -y groupinstall "Development Tools"
+    dnf -y install openmpi-devel
+    dnf -y install cmake pkgconf
+    dnf -y install fftw-devel
+    dnf -y install libpng-devel libjpeg-turbo-devel
+
+    export PATH=/usr/lib64/openmpi/bin:$PATH
+    echo "/usr/lib64/openmpi/lib" > /etc/ld.so.conf.d/openmpi.conf
+    ldconfig
+
+    dnf -y install curl tar bzip2
+    mkdir -p /opt
+    curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C /opt bin/micromamba
+    export PATH=/opt/bin:$PATH
+    micromamba create -y -p /opt/py312 -c conda-forge python=3.12 pip
+    export PATH=/opt/py312/bin:$PATH
+    pip config set global.index-url https://mirrors.ustc.edu.cn/pypi/web/simple
+    pip install mpi4py
+
+    tar -xf /opt/lammps-src-22Jul2025.tar.gz -C /opt
+    mkdir -p /opt/lammps
+    mkdir -p /opt/lammps-22Jul2025/build
+    cd /opt/lammps-22Jul2025/build
+    cmake ../cmake \
+      -DCMAKE_INSTALL_PREFIX=/opt/lammps \
+      -DPKG_REAXFF=ON \
+      -DPKG_MANYBODY=ON \
+      -DPKG_KSPACE=ON \
+      -DPKG_MOLECULE=ON \
+      -DBUILD_MPI=ON \
+      -DBUILD_SHARED_LIBS=ON \
+      -DPKG_PYTHON=ON \
+      -DPython_EXECUTABLE=/opt/py312/bin/python3 \
+      -DPKG_KIM=ON \
+      -DDOWNLOAD_KIM=yes
+
+    cmake --build . -j$(nproc)
+    make install
+    make install-python
+
+    mkdir -p /opt/lammps/lib64 /opt/lammps/bin
+    find . -name "libkim-api.so*" -exec cp -a {} /opt/lammps/lib64/ \;
+    find . -name "kim-api-collections-management" -exec cp -a {} /opt/lammps/bin/ \;
+
+# ---------- Stage 2: final runtime image ----------
+Bootstrap: docker-archive
+From: ./rockylinux10.1.20251126.tar
+Stage: runtime
+
+%labels
+    Maintainer yangys
+    App lammps 22Jul2025 in RockyLinux 10.1
+
+%files from build
+    /opt/bin /opt/bin
+    /opt/py312 /opt/py312
+    /opt/lammps /opt/lammps
+
+%post
+    sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+      -e 's|^#baseurl=http://dl.rockylinux.org/$contentdir|baseurl=https://mirrors.ustc.edu.cn/rocky|g' \
+      -i.bak \
+      /etc/yum.repos.d/rocky*.repo
+    dnf makecache
+
+    dnf -y install dnf-plugins-core
+    dnf config-manager --set-enabled crb
+    dnf -y install epel-release
+    dnf -y update
+
+    dnf -y install openmpi
+    dnf -y install fftw
+    dnf -y install libpng libjpeg-turbo
+
+    export PATH=/opt/bin:/opt/py312/bin:$PATH
+    pip config set global.index-url https://mirrors.ustc.edu.cn/pypi/web/simple
+
+    echo -e "/opt/lammps/lib64\n/opt/lammps/lib" > /etc/ld.so.conf.d/lammps.conf
+    ldconfig
+
+    export PATH=/usr/lib64/openmpi/bin:$PATH
+    echo "/usr/lib64/openmpi/lib" > /etc/ld.so.conf.d/openmpi.conf
+    ldconfig
+
+    dnf -y autoremove
+    dnf clean all
+    rm -rf /var/cache/dnf/* /root/.cache
+
+%environment
+    export LAMMPS_POTENTIALS=/opt/lammps/share/lammps/potentials
+    export PATH=/opt/lammps/bin:/usr/lib64/openmpi/bin:/opt/py312/bin:/opt/bin:$PATH
+    export OMP_NUM_THREADS=1 # mpi priority
+    export OMPI_ALLOW_RUN_AS_ROOT=1
+    export OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+
+%runscript
+    exec lmp "$@"

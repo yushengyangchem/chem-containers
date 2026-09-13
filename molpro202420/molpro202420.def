@@ -1,0 +1,31 @@
+Bootstrap: docker-archive
+From: ./debian12.11.tar
+
+%labels
+    Maintainer yangys
+    App molpro 2024.2.0 sockets in debian 12.11
+
+%files
+    ./molpro-mpp-2024.2.0.linux_x86_64_sockets.sh /opt
+    ./molpro24.2_hack/mc /opt
+    ./molpro24.2_hack/.token /opt
+
+%post
+    chmod +x /opt/molpro-mpp-2024.2.0.linux_x86_64_sockets.sh
+    /opt/molpro-mpp-2024.2.0.linux_x86_64_sockets.sh \
+    -batch \
+    -prefix /opt/molpro \
+    -instbin /usr/local/bin
+
+    rm -rf /opt/molpro-mpp-2024.2.0.linux_x86_64_sockets.sh
+    mv /opt/.token /opt/molpro/lib
+    mv /opt/mc /opt/molpro/bin
+    chmod +x /opt/molpro/bin/mc
+    cd /opt/molpro/bin && ./mc
+    rm -rf /root/.cache
+
+%environment
+    export PATH=$PATH:/usr/local/bin
+
+%runscript
+    exec molpro "$@"
